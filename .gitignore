@@ -5,3 +5,7 @@ __pycache__/
 findings/
 corpus/
 .pytest_cache/
+key.key
+key.key.pub
+*.pem
+*.key
