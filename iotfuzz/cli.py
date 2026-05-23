@@ -11,7 +11,7 @@ from .findings import FindingRecorder
 from .har import import_har
 from .models import AppConfig, RequestSeed
 from .monitors import build_monitors
-from .mutator import generate_cases
+from .scheduler import build_cases, format_duration, summarize_plan
 from .util import load_mapping, read_jsonl, write_json
 
 
@@ -26,6 +26,11 @@ def main(argv: list[str] | None = None) -> None:
     har = sub.add_parser("import-har", help="convert a HAR file to seed JSONL")
     har.add_argument("har")
     har.add_argument("--out", required=True)
+
+    plan = sub.add_parser("plan", help="estimate and preview prioritized fuzz cases")
+    plan.add_argument("--target", required=True)
+    plan.add_argument("--seeds", required=True)
+    plan.add_argument("--top", type=int, default=20)
 
     run = sub.add_parser("run", help="run low-rate structured fuzzing against a real device")
     run.add_argument("--target", required=True)
@@ -45,14 +50,31 @@ def main(argv: list[str] | None = None) -> None:
         seeds = import_har(args.har)
         _write_seeds(args.out, seeds)
         print(f"wrote {len(seeds)} seeds to {args.out}")
+    elif args.command == "plan":
+        config = AppConfig.from_mapping(load_mapping(args.target))
+        seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(args.seeds)]
+        summary = summarize_plan(seeds, config.fuzz, top=args.top)
+        print(f"seeds: {summary.seeds}")
+        print(f"generated cases: {summary.cases}")
+        print(f"selected cases: {summary.selected_cases}")
+        print(f"rate: {config.fuzz.rate_limit_per_sec}/s")
+        print(f"estimated minimum time: {format_duration(summary.estimated_seconds)}")
+        print(f"strategy: {config.fuzz.strategy}")
+        print("")
+        for idx, case in enumerate(summary.top_cases, 1):
+            print(
+                f"{idx:04d} score target: {case.seed.method} {case.seed.path} "
+                f"{case.location}.{case.name} payload={_short(case.payload)!r}"
+            )
     elif args.command == "run":
         config = AppConfig.from_mapping(load_mapping(args.target))
         seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(args.seeds)]
-        cases = generate_cases(seeds, config.fuzz.profile)
-        print(f"loaded {len(seeds)} seeds, generated {len(cases)} cases")
+        cases = build_cases(seeds, config.fuzz)
+        selected = cases if config.fuzz.max_cases is None else cases[: config.fuzz.max_cases]
+        print(f"loaded {len(seeds)} seeds, generated {len(cases)} cases, selected {len(selected)}")
         monitors = build_monitors(config.monitors)
         recorder = FindingRecorder(args.out)
-        asyncio.run(FuzzExecutor(config, monitors, recorder).run(cases))
+        asyncio.run(FuzzExecutor(config, monitors, recorder).run(selected))
     elif args.command == "replay":
         finding = json.loads(Path(args.finding).read_text(encoding="utf-8"))
         if args.target:
@@ -70,6 +92,12 @@ def _write_seeds(path: str, seeds: list[RequestSeed]) -> None:
     with out.open("w", encoding="utf-8") as fh:
         for seed in seeds:
             fh.write(json.dumps(seed.to_mapping(), sort_keys=True) + "\n")
+
+
+def _short(value: str, limit: int = 80) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"...<{len(value)} chars>"
 
 
 def _base_from_finding(finding: dict) -> str:

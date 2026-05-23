@@ -20,6 +20,7 @@ class FuzzConfig:
     confirm_attempts: int = 2
     max_cases: int | None = 1000
     profile: str = "safe"
+    strategy: str = "priority"
 
 
 @dataclass(slots=True)

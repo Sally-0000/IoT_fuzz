@@ -44,6 +44,12 @@ Run against a real device:
 iotfuzz run --target examples/target.yaml --seeds corpus/seeds.jsonl --out findings
 ```
 
+Preview the prioritized run plan before sending traffic:
+
+```bash
+iotfuzz plan --target examples/target.yaml --seeds corpus/seeds.jsonl --top 30
+```
+
 Replay a finding:
 
 ```bash
@@ -79,3 +85,15 @@ auth:
 ```
 
 By default `iotfuzz` ignores system proxy environment variables during fuzzing and HTTP health checks, which avoids accidentally sending router traffic through a local or corporate proxy.
+
+For first contact with a real device, use a small `max_cases` and priority scheduling:
+
+```yaml
+fuzz:
+  rate_limit_per_sec: 1
+  healthcheck_every: 10
+  confirm_attempts: 1
+  max_cases: 200
+  profile: safe
+  strategy: priority
+```

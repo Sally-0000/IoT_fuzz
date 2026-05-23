@@ -20,6 +20,7 @@ fuzz:
   confirm_attempts: 2
   max_cases: 1000
   profile: safe
+  strategy: priority
 
 monitors:
   - type: ping
