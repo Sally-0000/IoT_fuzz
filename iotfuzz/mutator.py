@@ -4,8 +4,8 @@ from .models import FuzzCase, RequestSeed
 from .payloads import payloads_for_profile
 
 
-def generate_cases(seeds: list[RequestSeed], profile: str = "safe") -> list[FuzzCase]:
-    payloads = payloads_for_profile(profile)
+def generate_cases(seeds: list[RequestSeed], profile: str = "safe", oob_url: str | None = None) -> list[FuzzCase]:
+    payloads = payloads_for_profile(profile, oob_url=oob_url)
     cases: list[FuzzCase] = []
     for seed in seeds:
         for location, params in (("query", seed.query), ("data", seed.data)):

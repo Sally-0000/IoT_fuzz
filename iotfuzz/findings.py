@@ -24,6 +24,8 @@ class FindingRecorder:
         response: dict[str, Any] | None,
         health: list[dict[str, Any]],
         confirmed: bool,
+        matches: list[dict[str, Any]] | None = None,
+        evidence: dict[str, Any] | None = None,
     ) -> Path:
         finding_id = f"FND-{self.counter:06d}"
         self.counter += 1
@@ -45,6 +47,8 @@ class FindingRecorder:
             "request": request,
             "response": response,
             "health": health,
+            "matches": matches or [],
+            "evidence": evidence or {},
         }
         write_json(case_dir / "finding.json", summary)
         (case_dir / "request.raw").write_text(_raw_request(request), encoding="utf-8")

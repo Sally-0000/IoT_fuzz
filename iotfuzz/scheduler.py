@@ -56,6 +56,12 @@ PAYLOAD_SCORE_TERMS = {
     "'\"`": 20,
     "%00": 20,
     "<script": 10,
+    ";id": 45,
+    "&&id": 45,
+    "|id": 45,
+    "sleep": 40,
+    "curl": 120,
+    "wget": 120,
 }
 
 
@@ -68,8 +74,8 @@ class PlanSummary:
     top_cases: list[FuzzCase]
 
 
-def build_cases(seeds: list[RequestSeed], config: FuzzConfig) -> list[FuzzCase]:
-    cases = generate_cases(seeds, config.profile)
+def build_cases(seeds: list[RequestSeed], config: FuzzConfig, oob_url: str | None = None) -> list[FuzzCase]:
+    cases = generate_cases(seeds, config.profile, oob_url=oob_url)
     if config.strategy == "priority":
         cases.sort(key=case_score, reverse=True)
     elif config.strategy == "path":
@@ -77,8 +83,8 @@ def build_cases(seeds: list[RequestSeed], config: FuzzConfig) -> list[FuzzCase]:
     return cases
 
 
-def summarize_plan(seeds: list[RequestSeed], config: FuzzConfig, top: int = 20) -> PlanSummary:
-    cases = build_cases(seeds, config)
+def summarize_plan(seeds: list[RequestSeed], config: FuzzConfig, top: int = 20, oob_url: str | None = None) -> PlanSummary:
+    cases = build_cases(seeds, config, oob_url=oob_url)
     selected = cases if config.max_cases is None else cases[: config.max_cases]
     rate = config.rate_limit_per_sec if config.rate_limit_per_sec > 0 else 1
     base_seconds = len(selected) / rate

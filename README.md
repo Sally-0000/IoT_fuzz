@@ -91,7 +91,7 @@ These options work with both `iotfuzz plan` and `iotfuzz run`:
 --timeout N              per-request timeout in seconds
 --healthcheck-every N    run monitors every N cases
 --confirm-attempts N     replay abnormal cases N times
---profile safe|dangerous payload set
+--profile safe|cmd-light|cmd-timeout|oob|dangerous payload set
 --strategy priority|path|none case ordering
 ```
 
@@ -107,9 +107,80 @@ iotfuzz run --max-cases 1000 --rate 2 --strategy priority
 # Focus on HAR traffic captured from authenticated UI actions
 iotfuzz run --seeds corpus/har-seeds.jsonl --max-cases 300 --rate 1
 
-# Enable command-injection style payloads carefully
-iotfuzz run --profile dangerous --max-cases 100 --rate 1
+# Light command-injection probes such as ;id
+iotfuzz run --profile cmd-light --max-cases 100 --rate 1
+
+# Timeout command-injection probes such as ;sleep 3
+iotfuzz run --profile cmd-timeout --max-cases 50 --rate 0.5 --timeout 5
 ```
+
+## Matchers
+
+`iotfuzz` records findings not only for timeouts and HTTP 5xx responses, but also for response content matches:
+
+- `/etc/passwd` style `root:` entries
+- `uid=0` / `gid=0` command-output markers
+- crash or stack markers such as `segmentation fault`, `SIGSEGV`, `Traceback`, `core dumped`
+- SQL error markers
+- reflected XSS payloads
+
+Matcher hits are saved in `finding.json` under `matches`.
+
+## SSH And Serial Evidence
+
+Optional monitors can collect stronger evidence when a finding is recorded:
+
+```yaml
+monitors:
+  - type: ssh
+    host: 192.168.1.1
+    username: root
+    identity_file: ~/.ssh/router_key
+    evidence_commands:
+      - "ps | grep -E '[h]ttpd|[u]httpd|[b]oa'"
+      - "dmesg | tail -80"
+      - "logread | tail -80"
+
+  - type: serial
+    port: /dev/ttyUSB0
+    baud: 115200
+    capture_sec: 2
+```
+
+SSH uses the system `ssh` client with `BatchMode=yes`, so key-based login should already work. Serial collection captures a short log slice when a finding is recorded.
+
+## OOB Callback
+
+Start a local callback logger:
+
+```bash
+iotfuzz oob-http --host 0.0.0.0 --port 8088 --log oob/callbacks.jsonl
+```
+
+Set the callback URL in `target.yaml`:
+
+```yaml
+oob:
+  http_url: http://YOUR_LAPTOP_IP:8088/cb
+```
+
+Then run OOB payloads:
+
+```bash
+iotfuzz run --profile oob --max-cases 100 --rate 1
+```
+
+Callbacks are appended to `oob/callbacks.jsonl`. This is useful for command injection and SSRF checks where the HTTP response does not show command output.
+
+## Reducer
+
+Minimize a saved finding payload:
+
+```bash
+iotfuzz reduce findings/FND-000001/finding.json --target target.yaml
+```
+
+The reducer tries shorter payload candidates and reports the smallest payload that still triggers a similar signal.
 
 ## Target Config
 

@@ -8,8 +8,9 @@ from typing import Any
 import httpx
 
 from .findings import FindingRecorder
+from .matchers import match_response
 from .models import AppConfig, FuzzCase
-from .monitors import Monitor, run_healthchecks
+from .monitors import Monitor, collect_evidence, run_healthchecks
 from .progress import ProgressReporter
 
 
@@ -32,6 +33,7 @@ class FuzzExecutor:
                 await self._rate_limit()
                 request = self._build_request(case)
                 response_data: dict[str, Any] | None = None
+                matches: list[dict[str, Any]] = []
                 reason = ""
                 try:
                     response = await client.request(**request)
@@ -43,6 +45,11 @@ class FuzzExecutor:
                     }
                     if response.status_code >= 500:
                         reason = f"http_status_{response.status_code}"
+                    response_matches = match_response(response.text, case)
+                    if response_matches:
+                        matches = [asdict(match) for match in response_matches]
+                        if not reason:
+                            reason = "response_match:" + ",".join(match["name"] for match in matches)
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                     reason = exc.__class__.__name__
                     response_data = {"error": repr(exc)}
@@ -57,8 +64,18 @@ class FuzzExecutor:
                             reason = "healthcheck_failed:" + ",".join(item.name for item in failed)
 
                 if reason:
-                    confirmed = await self._confirm(client, case)
-                    self.recorder.record(case, reason, request, response_data, health_rows, confirmed)
+                    confirmed = await self._confirm(client, case, reason)
+                    evidence = await collect_evidence(self.monitors)
+                    self.recorder.record(
+                        case,
+                        reason,
+                        request,
+                        response_data,
+                        health_rows,
+                        confirmed,
+                        matches=matches,
+                        evidence=evidence,
+                    )
                     self.progress.increment_findings()
                     self.progress.message(
                         f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}"
@@ -104,7 +121,7 @@ class FuzzExecutor:
         if response.status_code >= 500:
             raise RuntimeError(f"login failed with HTTP {response.status_code}")
 
-    async def _confirm(self, client: httpx.AsyncClient, case: FuzzCase) -> bool:
+    async def _confirm(self, client: httpx.AsyncClient, case: FuzzCase, reason: str) -> bool:
         attempts = max(0, self.config.fuzz.confirm_attempts)
         if attempts == 0:
             return False
@@ -114,6 +131,8 @@ class FuzzExecutor:
             try:
                 response = await client.request(**request)
                 if response.status_code >= 500:
+                    return True
+                if reason.startswith("response_match:") and match_response(response.text, case):
                     return True
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
                 return True

@@ -22,6 +22,9 @@ fuzz:
   profile: safe
   strategy: priority
 
+oob:
+  http_url: ""
+
 monitors:
   - type: ping
     host: 192.168.1.1
@@ -33,6 +36,19 @@ monitors:
     host: 192.168.1.1
     ports: [80]
     timeout_sec: 1
+  # Optional crash evidence monitors:
+  # - type: ssh
+  #   host: 192.168.1.1
+  #   username: root
+  #   identity_file: ~/.ssh/router_key
+  #   evidence_commands:
+  #     - "ps | grep -E '[h]ttpd|[u]httpd|[b]oa'"
+  #     - "dmesg | tail -80"
+  #     - "logread | tail -80"
+  # - type: serial
+  #   port: /dev/ttyUSB0
+  #   baud: 115200
+  #   capture_sec: 2
 
 recovery:
   type: manual

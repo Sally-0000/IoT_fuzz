@@ -11,6 +11,8 @@ from .findings import FindingRecorder
 from .har import import_har
 from .models import AppConfig, RequestSeed
 from .monitors import build_monitors
+from .oob import run_http_callback
+from .reducer import reduce_finding
 from .scheduler import build_cases, format_duration, summarize_plan
 from .util import load_mapping, read_jsonl
 
@@ -31,7 +33,8 @@ def main(argv: list[str] | None = None) -> None:
             "  iotfuzz import-har login.har --out corpus/login-seeds.jsonl\n"
             "  iotfuzz plan --top 50 --max-cases 500 --rate 2\n"
             "  iotfuzz run --max-cases 500 --rate 2 --profile safe\n"
-            "  iotfuzz run --seeds corpus/login-seeds.jsonl --profile dangerous --max-cases 100\n"
+            "  iotfuzz run --seeds corpus/login-seeds.jsonl --profile cmd-light --max-cases 100\n"
+            "  iotfuzz oob-http --port 8088 --log oob/callbacks.jsonl\n"
             "  iotfuzz replay findings/FND-000001/finding.json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -89,7 +92,8 @@ def main(argv: list[str] | None = None) -> None:
             "Examples:\n"
             "  iotfuzz run\n"
             "  iotfuzz run --max-cases 500 --rate 2\n"
-            "  iotfuzz run --profile dangerous --max-cases 100 --rate 1\n"
+            "  iotfuzz run --profile cmd-light --max-cases 100 --rate 1\n"
+            "  iotfuzz run --profile cmd-timeout --max-cases 50 --rate 0.5\n"
             "  iotfuzz run --seeds corpus/har-seeds.jsonl --out findings-har\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -108,6 +112,27 @@ def main(argv: list[str] | None = None) -> None:
     )
     replay_cmd.add_argument("finding")
     replay_cmd.add_argument("--target")
+
+    reduce_cmd = sub.add_parser(
+        "reduce",
+        help="try to minimize a saved finding payload",
+        description="Replay shorter payload candidates and report the smallest one that still triggers.",
+        epilog="Example:\n  iotfuzz reduce findings/FND-000001/finding.json --target target.yaml",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    reduce_cmd.add_argument("finding")
+    reduce_cmd.add_argument("--target")
+
+    oob_cmd = sub.add_parser(
+        "oob-http",
+        help="start a simple HTTP callback logger",
+        description="Start a local HTTP callback server for OOB command-injection/SSRF checks.",
+        epilog="Example:\n  iotfuzz oob-http --host 0.0.0.0 --port 8088 --log oob/callbacks.jsonl",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    oob_cmd.add_argument("--host", default="0.0.0.0")
+    oob_cmd.add_argument("--port", type=int, default=8088)
+    oob_cmd.add_argument("--log", default="oob/callbacks.jsonl")
 
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -131,7 +156,7 @@ def main(argv: list[str] | None = None) -> None:
         config = AppConfig.from_mapping(load_mapping(target_path))
         apply_fuzz_overrides(config, args)
         seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(seeds_path)]
-        summary = summarize_plan(seeds, config.fuzz, top=args.top)
+        summary = summarize_plan(seeds, config.fuzz, top=args.top, oob_url=config.oob.get("http_url"))
         print(f"seeds: {summary.seeds}")
         print(f"generated cases: {summary.cases}")
         print(f"selected cases: {summary.selected_cases}")
@@ -150,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
         config = AppConfig.from_mapping(load_mapping(target_path))
         apply_fuzz_overrides(config, args)
         seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(seeds_path)]
-        cases = build_cases(seeds, config.fuzz)
+        cases = build_cases(seeds, config.fuzz, oob_url=config.oob.get("http_url"))
         selected = cases if config.fuzz.max_cases is None else cases[: config.fuzz.max_cases]
         print(f"loaded {len(seeds)} seeds, generated {len(cases)} cases, selected {len(selected)}", flush=True)
         monitors = build_monitors(config.monitors)
@@ -165,6 +190,17 @@ def main(argv: list[str] | None = None) -> None:
             config = AppConfig.from_mapping({"target": {"base_url": base_url}})
         result = asyncio.run(replay(config, finding))
         print(json.dumps(result, indent=2, sort_keys=True))
+    elif args.command == "reduce":
+        finding = json.loads(Path(args.finding).read_text(encoding="utf-8"))
+        if args.target:
+            config = AppConfig.from_mapping(load_mapping(args.target))
+        else:
+            base_url = _base_from_finding(finding)
+            config = AppConfig.from_mapping({"target": {"base_url": base_url}})
+        result = asyncio.run(reduce_finding(config, finding))
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif args.command == "oob-http":
+        run_http_callback(args.host, args.port, args.log)
 
 
 def _write_seeds(path: str, seeds: list[RequestSeed]) -> None:
@@ -184,8 +220,8 @@ def add_fuzz_overrides(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--confirm-attempts", type=int, help="replay abnormal cases N times for confirmation")
     group.add_argument(
         "--profile",
-        choices=["safe", "dangerous"],
-        help="payload profile. safe avoids command-execution payloads; dangerous includes them",
+        choices=["safe", "cmd-light", "cmd-timeout", "oob", "dangerous"],
+        help="payload profile. safe avoids command payloads; cmd-light uses id-style probes; cmd-timeout uses sleep probes; oob uses callback payloads",
     )
     group.add_argument(
         "--strategy",
@@ -247,6 +283,11 @@ fuzz:
   profile: safe
   strategy: priority
 
+oob:
+  # Used by --profile oob or dangerous payloads.
+  # Start with: iotfuzz oob-http --host 0.0.0.0 --port 8088 --log oob/callbacks.jsonl
+  http_url: ""
+
 monitors:
   - type: ping
     host: {target_ip}
@@ -258,6 +299,19 @@ monitors:
     host: {target_ip}
     ports: [80]
     timeout_sec: 1
+  # Optional later:
+  # - type: ssh
+  #   host: {target_ip}
+  #   username: root
+  #   identity_file: ~/.ssh/router_key
+  #   evidence_commands:
+  #     - "ps | grep -E '[h]ttpd|[u]httpd|[b]oa'"
+  #     - "dmesg | tail -80"
+  #     - "logread | tail -80"
+  # - type: serial
+  #   port: /dev/ttyUSB0
+  #   baud: 115200
+  #   capture_sec: 2
 
 recovery:
   type: manual

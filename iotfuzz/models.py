@@ -36,6 +36,7 @@ class AppConfig:
     monitors: list[MonitorConfig] = field(default_factory=list)
     auth: dict[str, Any] = field(default_factory=lambda: {"type": "none"})
     recovery: dict[str, Any] = field(default_factory=lambda: {"type": "manual"})
+    oob: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "AppConfig":
@@ -58,6 +59,7 @@ class AppConfig:
             monitors=monitors,
             auth=data.get("auth") or {"type": "none"},
             recovery=data.get("recovery") or {"type": "manual"},
+            oob=data.get("oob") or {},
         )
 
 
