@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> None:
             "  iotfuzz run --max-cases 500 --rate 2 --profile safe\n"
             "  iotfuzz run --auto --max-cases 200 --rate 1\n"
             "  iotfuzz run --fin-auto --max-cases 500 --rate 2\n"
+            "  iotfuzz run --fast --concurrency 100\n"
             "  iotfuzz run --seeds corpus/login-seeds.jsonl --profile cmd-light --max-cases 100\n"
             "  iotfuzz oob-http --port 8088 --log oob/callbacks.jsonl\n"
             "  iotfuzz replay findings/FND-000001/finding.json\n"
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> None:
             "  iotfuzz run --max-cases 500 --rate 2\n"
             "  iotfuzz run --auto --max-cases 200 --rate 1\n"
             "  iotfuzz run --fin-auto --max-cases 500 --rate 2\n"
+            "  iotfuzz run --fast --concurrency 100\n"
             "  iotfuzz run --profile cmd-light --max-cases 100 --rate 1\n"
             "  iotfuzz run --profile cmd-timeout --max-cases 50 --rate 0.5\n"
             "  iotfuzz run --seeds corpus/har-seeds.jsonl --out findings-har\n"
@@ -109,6 +111,11 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--target", help="目标配置文件，默认自动找 target.yaml 或 target.json")
     run.add_argument("--seeds", default=DEFAULT_SEEDS, help=f"seed JSONL，默认 {DEFAULT_SEEDS}")
     run.add_argument("--out", default=DEFAULT_FINDINGS, help=f"finding 输出目录，默认 {DEFAULT_FINDINGS}")
+    run.add_argument(
+        "--fast",
+        action="store_true",
+        help="拉满模式：取消限速；未指定 --max-cases 时扫描全部；未指定确认/健康检查时使用更激进默认值",
+    )
     auto_group = run.add_mutually_exclusive_group()
     auto_group.add_argument(
         "--auto",
@@ -193,6 +200,7 @@ def main(argv: list[str] | None = None) -> None:
         seeds_path = resolve_existing(args.seeds, "seeds")
         config = AppConfig.from_mapping(load_mapping(target_path))
         apply_fuzz_overrides(config, args)
+        apply_fast_mode(config, args)
         seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(seeds_path)]
         cases = build_cases(seeds, config.fuzz, oob_url=config.oob.get("http_url"))
         selected = cases if config.fuzz.max_cases is None else cases[: config.fuzz.max_cases]
@@ -240,6 +248,7 @@ def _write_seeds(path: str, seeds: list[RequestSeed]) -> None:
 def add_fuzz_overrides(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("fuzz 参数覆盖")
     group.add_argument("--rate", type=float, help="每秒请求数，覆盖 fuzz.rate_limit_per_sec")
+    group.add_argument("--concurrency", type=int, help="并发请求数，默认从配置读取；--fast 未指定时默认 50")
     group.add_argument("--max-cases", type=int, help="普通模式的一批 case 数；auto 模式的每批 case 数")
     group.add_argument("--timeout", type=float, help="单个请求超时时间，单位秒")
     group.add_argument("--healthcheck-every", type=int, help="每 N 个 case 执行一次健康检查")
@@ -259,6 +268,7 @@ def add_fuzz_overrides(parser: argparse.ArgumentParser) -> None:
 def apply_fuzz_overrides(config: AppConfig, args: argparse.Namespace) -> None:
     mapping = {
         "rate": "rate_limit_per_sec",
+        "concurrency": "concurrency",
         "max_cases": "max_cases",
         "timeout": "request_timeout_sec",
         "healthcheck_every": "healthcheck_every",
@@ -270,6 +280,21 @@ def apply_fuzz_overrides(config: AppConfig, args: argparse.Namespace) -> None:
         value = getattr(args, arg_name, None)
         if value is not None:
             setattr(config.fuzz, field_name, value)
+
+
+def apply_fast_mode(config: AppConfig, args: argparse.Namespace) -> None:
+    if not getattr(args, "fast", False):
+        return
+    config.fuzz.rate_limit_per_sec = 0
+    if getattr(args, "concurrency", None) is None:
+        config.fuzz.concurrency = 50
+    if getattr(args, "max_cases", None) is None:
+        config.fuzz.max_cases = None
+    if getattr(args, "confirm_attempts", None) is None:
+        config.fuzz.confirm_attempts = 0
+    if getattr(args, "healthcheck_every", None) is None:
+        config.fuzz.healthcheck_every = 100
+    print("[fast] 已启用拉满模式：不限速，减少确认和健康检查开销", flush=True)
 
 
 async def run_auto_batches(

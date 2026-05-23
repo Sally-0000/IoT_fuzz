@@ -64,6 +64,19 @@ iotfuzz run --auto --max-cases 200 --rate 1
 iotfuzz run --fin-auto --max-cases 500 --rate 2
 ```
 
+Fast mode removes pacing and scans all generated cases unless `--max-cases` is explicitly set:
+
+```bash
+# Full-throttle scan: no rate limit, no default max_cases cap, no confirmation replay by default.
+iotfuzz run --fast
+
+# Override concurrency explicitly.
+iotfuzz run --fast --concurrency 100
+
+# Full-throttle first 2000 cases only.
+iotfuzz run --fast --max-cases 2000
+```
+
 Override fuzz parameters from the CLI:
 
 ```bash
@@ -99,6 +112,7 @@ These options work with both `iotfuzz plan` and `iotfuzz run`:
 
 ```text
 --rate N                 requests per second
+--concurrency N          parallel HTTP requests
 --max-cases N            cap the number of cases
 --timeout N              per-request timeout in seconds
 --healthcheck-every N    run monitors every N cases

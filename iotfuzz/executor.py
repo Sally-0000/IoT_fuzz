@@ -21,6 +21,7 @@ class FuzzExecutor:
         self.recorder = recorder
         self.last_request_at = 0.0
         self.progress: ProgressReporter | None = None
+        self._rate_lock = asyncio.Lock()
 
     async def run(self, cases: list[FuzzCase]) -> int:
         max_cases = self.config.fuzz.max_cases
@@ -30,71 +31,91 @@ class FuzzExecutor:
         finding_count = 0
         async with httpx.AsyncClient(**self._client_args()) as client:
             await self._login(client)
-            for index, case in enumerate(cases, 1):
-                await self._rate_limit()
-                request = self._build_request(case)
-                response_data: dict[str, Any] | None = None
-                matches: list[dict[str, Any]] = []
-                reason = ""
-                try:
-                    response = await client.request(**request)
-                    response_data = {
-                        "status_code": response.status_code,
-                        "headers": dict(response.headers),
-                        "text_sample": response.text[:4096],
-                        "elapsed_sec": response.elapsed.total_seconds(),
-                    }
-                    if response.status_code >= 500:
-                        reason = f"http_status_{response.status_code}"
-                    response_matches = match_response(response.text, case)
-                    if response_matches:
-                        matches = [asdict(match) for match in response_matches]
-                        if not reason:
-                            reason = "response_match:" + ",".join(match["name"] for match in matches)
-                except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                    reason = exc.__class__.__name__
-                    response_data = {"error": repr(exc)}
+            concurrency = max(1, int(self.config.fuzz.concurrency))
+            if concurrency == 1:
+                for index, case in enumerate(cases, 1):
+                    finding_count += await self._execute_case(client, case, index)
+                    self.progress.update(index)
+            else:
+                semaphore = asyncio.Semaphore(concurrency)
 
-                health_rows = []
-                if reason or index % self.config.fuzz.healthcheck_every == 0:
-                    health = await run_healthchecks(self.monitors)
-                    health_rows = [asdict(item) for item in health]
-                    if not reason:
-                        failed = [item for item in health if not item.ok]
-                        if failed:
-                            reason = "healthcheck_failed:" + ",".join(item.name for item in failed)
+                async def worker(index: int, case: FuzzCase) -> int:
+                    async with semaphore:
+                        return await self._execute_case(client, case, index)
 
-                if reason:
-                    confirmed = await self._confirm(client, case, reason)
-                    evidence = await collect_evidence(self.monitors)
-                    self.recorder.record(
-                        case,
-                        reason,
-                        request,
-                        response_data,
-                        health_rows,
-                        confirmed,
-                        matches=matches,
-                        evidence=evidence,
-                    )
-                    self.progress.increment_findings()
-                    finding_count += 1
-                    self.progress.message(
-                        f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}"
-                    )
-                self.progress.update(index)
+                completed = 0
+                tasks = [asyncio.create_task(worker(index, case)) for index, case in enumerate(cases, 1)]
+                for task in asyncio.as_completed(tasks):
+                    finding_count += await task
+                    completed += 1
+                    self.progress.update(completed)
         self.progress.finish()
         return finding_count
 
     async def _rate_limit(self) -> None:
-        rate = self.config.fuzz.rate_limit_per_sec
-        if rate <= 0:
-            return
-        interval = 1.0 / rate
-        elapsed = time.monotonic() - self.last_request_at
-        if elapsed < interval:
-            await asyncio.sleep(interval - elapsed)
-        self.last_request_at = time.monotonic()
+        async with self._rate_lock:
+            rate = self.config.fuzz.rate_limit_per_sec
+            if rate <= 0:
+                return
+            interval = 1.0 / rate
+            elapsed = time.monotonic() - self.last_request_at
+            if elapsed < interval:
+                await asyncio.sleep(interval - elapsed)
+            self.last_request_at = time.monotonic()
+
+    async def _execute_case(self, client: httpx.AsyncClient, case: FuzzCase, index: int) -> int:
+        await self._rate_limit()
+        request = self._build_request(case)
+        response_data: dict[str, Any] | None = None
+        matches: list[dict[str, Any]] = []
+        reason = ""
+        try:
+            response = await client.request(**request)
+            response_data = {
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "text_sample": response.text[:4096],
+                "elapsed_sec": response.elapsed.total_seconds(),
+            }
+            if response.status_code >= 500:
+                reason = f"http_status_{response.status_code}"
+            response_matches = match_response(response.text, case)
+            if response_matches:
+                matches = [asdict(match) for match in response_matches]
+                if not reason:
+                    reason = "response_match:" + ",".join(match["name"] for match in matches)
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            reason = exc.__class__.__name__
+            response_data = {"error": repr(exc)}
+
+        health_rows = []
+        if reason or index % self.config.fuzz.healthcheck_every == 0:
+            health = await run_healthchecks(self.monitors)
+            health_rows = [asdict(item) for item in health]
+            if not reason:
+                failed = [item for item in health if not item.ok]
+                if failed:
+                    reason = "healthcheck_failed:" + ",".join(item.name for item in failed)
+
+        if not reason:
+            return 0
+
+        confirmed = await self._confirm(client, case, reason)
+        evidence = await collect_evidence(self.monitors)
+        self.recorder.record(
+            case,
+            reason,
+            request,
+            response_data,
+            health_rows,
+            confirmed,
+            matches=matches,
+            evidence=evidence,
+        )
+        if self.progress:
+            self.progress.increment_findings()
+            self.progress.message(f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}")
+        return 1
 
     def _build_request(self, case: FuzzCase) -> dict[str, Any]:
         return build_request(self.config, case)
