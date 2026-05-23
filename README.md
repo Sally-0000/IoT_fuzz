@@ -1,4 +1,4 @@
-# iotfuzz
+# IoT_fuzz
 
 `iotfuzz` is a Python toolkit for low-rate, structured HTTP fuzzing against real router/IoT devices. Firmware/rootfs data is used offline to build request seeds; fuzz execution happens against the physical device.
 
