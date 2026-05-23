@@ -10,6 +10,7 @@ import httpx
 from .findings import FindingRecorder
 from .models import AppConfig, FuzzCase
 from .monitors import Monitor, run_healthchecks
+from .progress import ProgressReporter
 
 
 class FuzzExecutor:
@@ -18,11 +19,13 @@ class FuzzExecutor:
         self.monitors = monitors
         self.recorder = recorder
         self.last_request_at = 0.0
+        self.progress: ProgressReporter | None = None
 
     async def run(self, cases: list[FuzzCase]) -> None:
         max_cases = self.config.fuzz.max_cases
         if max_cases is not None:
             cases = cases[:max_cases]
+        self.progress = ProgressReporter(len(cases))
         async with httpx.AsyncClient(**self._client_args()) as client:
             await self._login(client)
             for index, case in enumerate(cases, 1):
@@ -56,7 +59,12 @@ class FuzzExecutor:
                 if reason:
                     confirmed = await self._confirm(client, case)
                     self.recorder.record(case, reason, request, response_data, health_rows, confirmed)
-                    print(f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}")
+                    self.progress.increment_findings()
+                    self.progress.message(
+                        f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}"
+                    )
+                self.progress.update(index)
+        self.progress.finish()
 
     async def _rate_limit(self) -> None:
         rate = self.config.fuzz.rate_limit_per_sec

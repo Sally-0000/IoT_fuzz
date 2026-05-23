@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
         seeds = [RequestSeed.from_mapping(row) for row in read_jsonl(args.seeds)]
         cases = build_cases(seeds, config.fuzz)
         selected = cases if config.fuzz.max_cases is None else cases[: config.fuzz.max_cases]
-        print(f"loaded {len(seeds)} seeds, generated {len(cases)} cases, selected {len(selected)}")
+        print(f"loaded {len(seeds)} seeds, generated {len(cases)} cases, selected {len(selected)}", flush=True)
         monitors = build_monitors(config.monitors)
         recorder = FindingRecorder(args.out)
         asyncio.run(FuzzExecutor(config, monitors, recorder).run(selected))
