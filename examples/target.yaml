@@ -1,0 +1,37 @@
+target:
+  host: 192.168.1.1
+  base_url: http://192.168.1.1
+
+auth:
+  type: none
+  # Future-friendly shape:
+  # type: form
+  # login_url: /login.cgi
+  # method: POST
+  # data:
+  #   username: admin
+  #   password: admin
+
+fuzz:
+  concurrency: 1
+  rate_limit_per_sec: 2
+  request_timeout_sec: 3
+  healthcheck_every: 10
+  confirm_attempts: 2
+  max_cases: 1000
+  profile: safe
+
+monitors:
+  - type: ping
+    host: 192.168.1.1
+    timeout_sec: 1
+  - type: http
+    url: http://192.168.1.1/
+    timeout_sec: 3
+  - type: tcp
+    host: 192.168.1.1
+    ports: [80]
+    timeout_sec: 1
+
+recovery:
+  type: manual
