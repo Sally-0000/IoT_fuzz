@@ -26,28 +26,36 @@ If you do not need YAML, `pip install -e .` is enough and JSON configs still wor
 
 ## Quick Start
 
+Create a workspace anywhere, then initialize the target config:
+
+```bash
+mkdir -p ~/router-fuzz/run1
+cd ~/router-fuzz/run1
+iotfuzz init --target-ip 192.168.1.1
+```
+
 Analyze a rootfs and generate seed requests:
 
 ```bash
-iotfuzz analyze-rootfs ./rootfs --out corpus/seeds.jsonl
+iotfuzz analyze-rootfs ./rootfs
 ```
 
 Import captured browser traffic:
 
 ```bash
-iotfuzz import-har traffic.har --out corpus/har-seeds.jsonl
+iotfuzz import-har traffic.har
 ```
 
 Run against a real device:
 
 ```bash
-iotfuzz run --target examples/target.yaml --seeds corpus/seeds.jsonl --out findings
+iotfuzz run
 ```
 
 Preview the prioritized run plan before sending traffic:
 
 ```bash
-iotfuzz plan --target examples/target.yaml --seeds corpus/seeds.jsonl --top 30
+iotfuzz plan --top 30
 ```
 
 Replay a finding:
@@ -55,6 +63,14 @@ Replay a finding:
 ```bash
 iotfuzz replay findings/FND-000001/finding.json
 ```
+
+The default workspace paths are:
+
+- `target.yaml`
+- `corpus/seeds.jsonl`
+- `findings/`
+
+You can still override them with `--target`, `--seeds`, and `--out`.
 
 ## Target Config
 
