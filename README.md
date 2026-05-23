@@ -52,6 +52,18 @@ Run against a real device:
 iotfuzz run
 ```
 
+Auto mode scans in batches using `--max-cases` as the batch size:
+
+```bash
+# Run the first batch; if no finding appears, keep scanning batch by batch.
+# Stop as soon as a finding is found.
+iotfuzz run --auto --max-cases 200 --rate 1
+
+# Scan every batch until all generated cases are finished.
+# Findings do not stop the run.
+iotfuzz run --fin-auto --max-cases 500 --rate 2
+```
+
 Override fuzz parameters from the CLI:
 
 ```bash

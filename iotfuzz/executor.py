@@ -22,11 +22,12 @@ class FuzzExecutor:
         self.last_request_at = 0.0
         self.progress: ProgressReporter | None = None
 
-    async def run(self, cases: list[FuzzCase]) -> None:
+    async def run(self, cases: list[FuzzCase]) -> int:
         max_cases = self.config.fuzz.max_cases
         if max_cases is not None:
             cases = cases[:max_cases]
         self.progress = ProgressReporter(len(cases))
+        finding_count = 0
         async with httpx.AsyncClient(**self._client_args()) as client:
             await self._login(client)
             for index, case in enumerate(cases, 1):
@@ -77,11 +78,13 @@ class FuzzExecutor:
                         evidence=evidence,
                     )
                     self.progress.increment_findings()
+                    finding_count += 1
                     self.progress.message(
                         f"[finding] {reason} {case.seed.method} {case.seed.path} {case.location}.{case.name}"
                     )
                 self.progress.update(index)
         self.progress.finish()
+        return finding_count
 
     async def _rate_limit(self) -> None:
         rate = self.config.fuzz.rate_limit_per_sec
