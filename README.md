@@ -52,10 +52,19 @@ Run against a real device:
 iotfuzz run
 ```
 
+Override fuzz parameters from the CLI:
+
+```bash
+iotfuzz run --max-cases 500 --rate 2 --timeout 3
+iotfuzz run --profile dangerous --max-cases 100 --rate 1
+iotfuzz run --seeds corpus/har-seeds.jsonl --out findings-har
+```
+
 Preview the prioritized run plan before sending traffic:
 
 ```bash
 iotfuzz plan --top 30
+iotfuzz plan --top 50 --max-cases 500 --rate 2
 ```
 
 Replay a finding:
@@ -71,6 +80,36 @@ The default workspace paths are:
 - `findings/`
 
 You can still override them with `--target`, `--seeds`, and `--out`.
+
+## Common Fuzz Options
+
+These options work with both `iotfuzz plan` and `iotfuzz run`:
+
+```text
+--rate N                 requests per second
+--max-cases N            cap the number of cases
+--timeout N              per-request timeout in seconds
+--healthcheck-every N    run monitors every N cases
+--confirm-attempts N     replay abnormal cases N times
+--profile safe|dangerous payload set
+--strategy priority|path|none case ordering
+```
+
+Examples:
+
+```bash
+# Fast smoke test
+iotfuzz run --max-cases 100 --rate 1 --confirm-attempts 1
+
+# Prioritized first pass
+iotfuzz run --max-cases 1000 --rate 2 --strategy priority
+
+# Focus on HAR traffic captured from authenticated UI actions
+iotfuzz run --seeds corpus/har-seeds.jsonl --max-cases 300 --rate 1
+
+# Enable command-injection style payloads carefully
+iotfuzz run --profile dangerous --max-cases 100 --rate 1
+```
 
 ## Target Config
 
